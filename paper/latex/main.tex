@@ -248,6 +248,9 @@ As a descriptive check, we fitted the logistic model once on all data (not used 
 \section{Conclusion}
 We evaluated rule-based and machine-learning rankers built on calendar-month seasonal features over 252 strictly out-of-sample months. The production system's November backtest is reproducible but does not generalise. Over the full calendar, neither the seasonal filter nor any ranker beats an equal-weight benchmark of the same universe at conventional significance levels, although gradient boosting delivers the highest excess return and the shallowest drawdown. Scores are poorly calibrated as probabilities. Future work will replace the survivorship-biased universe with point-in-time index membership, add the RSI-based timing signal and options-implied features, and evaluate the options layer on historical chains.
 
+\section*{Code Availability}
+The experiment code, figure scripts, and result tables are available at \url{https://github.com/smvijaykumar/seasonal_options_system}.
+
 \section*{Acknowledgment}
 % IEEE policy requires disclosure of AI-generated content (text, figures,
 % code) in the acknowledgments, naming the system and the sections it was

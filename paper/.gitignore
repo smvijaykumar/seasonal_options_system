@@ -1,0 +1,8 @@
+# LaTeX build by-products
+latex/build.out
+latex/*.log
+latex/*.blg
+latex/*.aux
+latex/*.bbl
+latex/*.out
+__pycache__/

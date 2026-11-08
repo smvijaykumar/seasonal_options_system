@@ -35,9 +35,16 @@ import statsmodels.api as sm
 warnings.filterwarnings("ignore")
 
 HERE = Path(__file__).parent
-CACHE = HERE.parent / "output" / "backtest_monthly_cache.pkl"
+# Price data, first match wins:
+#   1. the production pipeline's cache (exact data behind the published numbers),
+#   2. paper/data/monthly_closes.pkl (written by a previous self-download),
+#   3. a fresh Yahoo Finance download of paper/data/universe.csv, saved to (2).
+# Pass --refresh to force (3). Yahoo revises adjusted prices over time, so a
+# fresh download reproduces the method but may differ slightly in the decimals.
+PROJECT_CACHE = HERE.parent / "output" / "backtest_monthly_cache.pkl"
+LOCAL_CACHE = HERE / "data" / "monthly_closes.pkl"
+UNIVERSE = HERE / "data" / "universe.csv"
 OUT = HERE / "results"
-OUT.mkdir(exist_ok=True)
 
 TOP_N = 10
 MIN_YEARS = 15
@@ -55,8 +62,55 @@ FEATURES = ["m2_avg", "m2_wr", "m2_std", "m2_n", "m1_avg", "m3_avg", "neglogp",
 
 
 # ---------------------------------------------------------------- data
-def load_returns():
-    monthly = pickle.load(open(CACHE, "rb"))
+def download_monthly(tickers, chunk_size=80, retries=2):
+    """Monthly auto-adjusted closes from Yahoo Finance, full history."""
+    import time
+    import yfinance as yf
+    monthly, missing = {}, []
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i + chunk_size]
+        print(f"  downloading {i + 1}-{i + len(chunk)} of {len(tickers)} ...")
+        data = None
+        for attempt in range(retries + 1):
+            try:
+                data = yf.download(chunk, period="max", interval="1mo", group_by="ticker",
+                                   progress=False, threads=True, auto_adjust=True)
+                break
+            except Exception as e:  # network hiccup: retry the chunk
+                print(f"    chunk failed ({e}), retry {attempt + 1}/{retries}")
+                time.sleep(2)
+        for sym in chunk:
+            try:
+                s = data[sym]["Close"].dropna()
+            except Exception:
+                s = pd.Series(dtype=float)
+            if len(s) >= 13:
+                monthly[sym] = s
+            else:
+                missing.append(sym)
+    if missing:
+        print(f"  no usable history for {len(missing)} tickers: {', '.join(missing)}")
+    return monthly
+
+
+def get_monthly(refresh=False):
+    if not refresh and PROJECT_CACHE.exists():
+        print(f"price data: {PROJECT_CACHE}")
+        return pickle.load(open(PROJECT_CACHE, "rb"))
+    if not refresh and LOCAL_CACHE.exists():
+        print(f"price data: {LOCAL_CACHE}")
+        return pickle.load(open(LOCAL_CACHE, "rb"))
+    tickers = pd.read_csv(UNIVERSE)["ticker"].tolist()
+    print(f"price data: downloading {len(tickers)} tickers from Yahoo Finance")
+    monthly = download_monthly(tickers)
+    LOCAL_CACHE.parent.mkdir(exist_ok=True)
+    pickle.dump(monthly, open(LOCAL_CACHE, "wb"))
+    print(f"  saved {len(monthly)} series to {LOCAL_CACHE}")
+    return monthly
+
+
+def load_returns(refresh=False):
+    monthly = get_monthly(refresh)
     closes = pd.DataFrame(monthly).sort_index()
     closes.index = pd.to_datetime(closes.index)
     closes = closes[closes.index <= TEST_END]
@@ -285,7 +339,17 @@ def calibration(pooled, name, bins=10):
 
 # ---------------------------------------------------------------- main
 def main():
-    closes, rets = load_returns()
+    import argparse
+    global OUT
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--refresh", action="store_true",
+                    help="ignore cached prices and re-download from Yahoo Finance")
+    ap.add_argument("--out", type=Path, default=OUT, help="results directory (default: paper/results)")
+    args = ap.parse_args()
+    OUT = args.out
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    closes, rets = load_returns(refresh=args.refresh)
     spy = rets["SPY"]
     print(f"universe: {rets.shape[1] - 1} tickers, months {rets.index[0].date()}..{rets.index[-1].date()}")
     p = build_panel(closes, rets)
